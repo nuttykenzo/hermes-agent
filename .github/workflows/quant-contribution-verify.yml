@@ -1,0 +1,117 @@
+name: Quant contribution verification
+
+'on':
+  push:
+    branches: [verify/optional-0xarchive-backtest-145670]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quant-contribution-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Full Linux unit suite (${{ matrix.slice }}/8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Checkout exact contribution
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: 2a06cd5d9f9e15aa1228d96493b0d917d803499a
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tested source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2a06cd5d9f9e15aa1228d96493b0d917d803499a
+          test "$(git rev-parse 'HEAD^{tree}')" = 11b1bd8898ad41d3a787ac8799c5fc0dff2a3fba
+          git --version
+          git status --porcelain
+      - name: Set up native locked dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: all
+          packages: ffmpeg,ripgrep
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+          cache: 'false'
+          cache-python: 'false'
+          cache-node: 'false'
+          save-tools-cache: 'false'
+          save-python-cache: 'false'
+          save-node-cache: 'false'
+          archive-inputs: 'false'
+      - name: Require WAL-capable SQLite
+        shell: bash
+        run: |
+          "$HERMES_PYTHON" -c "import sqlite3, sys, hermes_state_wal as w; v = w.is_sqlite_wal_reset_vulnerable(); print(f'Python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}, WAL-reset vulnerable: {v}'); sys.exit(1 if v else 0)"
+      - name: Run complete native slice
+        shell: bash
+        run: |
+          scripts/run_tests.sh
+        env:
+          HERMES_TEST_SLICE: ${{ matrix.slice }}/8
+          HERMES_TEST_WORKERS: '4'
+          HERMES_TEST_FILE_TIMEOUT: '600'
+          OPENROUTER_API_KEY: ''
+          OPENAI_API_KEY: ''
+          NOUS_API_KEY: ''
+      - name: Require clean tested worktree
+        uses: ./.github/actions/check-clean-worktree
+
+  portability:
+    name: Skill portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    steps:
+      - name: Checkout exact contribution
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          ref: 2a06cd5d9f9e15aa1228d96493b0d917d803499a
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tested source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2a06cd5d9f9e15aa1228d96493b0d917d803499a
+          test "$(git rev-parse 'HEAD^{tree}')" = 11b1bd8898ad41d3a787ac8799c5fc0dff2a3fba
+          git --version
+          git status --porcelain
+      - name: Set up native locked dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: '["all"]'
+          test-environment: 'true'
+          cache: 'false'
+          cache-python: 'false'
+          cache-node: 'false'
+          save-tools-cache: 'false'
+          save-python-cache: 'false'
+          save-node-cache: 'false'
+          archive-inputs: 'false'
+      - name: Run skill-specific tests
+        shell: bash
+        run: |
+          scripts/run_tests.sh tests/skills/test_0xarchive_backtest_skill.py
+        env:
+          HERMES_TEST_WORKERS: '1'
+          HERMES_TEST_FILE_TIMEOUT: '600'
+          OPENROUTER_API_KEY: ''
+          OPENAI_API_KEY: ''
+          NOUS_API_KEY: ''
+      - name: Require clean tested worktree
+        uses: ./.github/actions/check-clean-worktree
